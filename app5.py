@@ -5,40 +5,39 @@ import numpy as np
 import datetime
 
 # --- 頁面設定 ---
-st.set_page_config(page_title="ETF 終極資產試算", page_icon="🏆", layout="wide")
+st.set_page_config(page_title="ETF 資產試算", page_icon="💎", layout="wide")
 
-st.title("🏆 ETF 終極資產試算")
+st.title("ETF 資產試算")
 st.markdown("""
-這個工具集成了 **單筆投入**、**定期定額** 以及 **雙標的 PK 對決** 功能。
-利用歷史大數據推算未來，並支援 **下載報表**。
+具備 **單筆投入**、**定期定額** 與 **雙標的 PK** 功能。
+報表全面升級：包含 **累積股息**、**持有股數** 與 **平均成本 (均價)**。
 """)
 
-# --- 側邊欄：強大的輸入區 ---
+# --- 側邊欄：輸入區 ---
 with st.sidebar:
     st.header("1. 設定投資標的")
     ticker1 = st.text_input("選手 A 代號 (需加 .TW)", value="0050.TW")
     
-    # 功能 1: 雙強對決
+    # 功能: 雙強對決
     enable_pk = st.toggle("開啟 PK 模式 (比較第二檔)", value=False)
     ticker2 = ""
     if enable_pk:
         ticker2 = st.text_input("選手 B 代號 (需加 .TW)", value="0056.TW")
     
     st.header("2. 資金投入策略")
-    # 功能 2: 單筆 + 定期定額
-    initial_lump_sum = st.number_input("單筆投入金額 (一開始的本金)", min_value=0, value=100000, step=10000, help="這是你在第一個月第一天就投入的資金")
+    initial_lump_sum = st.number_input("單筆投入金額 (初始本金)", min_value=0, value=100000, step=10000)
     monthly_invest = st.number_input("每月定期定額金額", min_value=0, value=10000, step=1000)
     
     if initial_lump_sum == 0 and monthly_invest == 0:
-        st.warning("⚠️ 提醒：單筆投入與每月扣款不能同時為 0")
+        st.warning("⚠️ 提醒：資金不能全為 0")
 
     st.header("3. 時間與參數")
     future_years = st.slider("預計投資年數", min_value=1, max_value=40, value=10)
-    reinvest = st.toggle("股息再投入 (複利)", value=True)
+    reinvest = st.toggle("股息再投入(複利)", value=True)
     
-    btn_calc = st.button("開始對決 / 分析", type="primary")
+    btn_calc = st.button("開始詳細分析", type="primary")
 
-# --- 函數：抓取歷史數據並計算指標 ---
+# --- 函數：抓取歷史數據 ---
 def get_historical_metrics(ticker_symbol):
     try:
         stock = yf.Ticker(ticker_symbol)
@@ -54,7 +53,6 @@ def get_historical_metrics(ticker_symbol):
         time_diff = (hist.index[-1] - hist.index[0]).days
         years_past = time_diff / 365.25
         
-        # 短期數據防呆
         if years_past < 0.01: years_past = 0.01
             
         if start_price > 0:
@@ -85,7 +83,7 @@ def get_historical_metrics(ticker_symbol):
     except Exception as e:
         return None, str(e)
 
-# --- 函數：推算未來資產 (邏輯升級：加入單筆投入) ---
+# --- 函數：推算未來資產 (核心修改處) ---
 def calculate_projection(metrics, initial_fund, monthly_amt, years, is_reinvest):
     months = years * 12
     monthly_growth = (1 + metrics['cagr']) ** (1/12) - 1
@@ -93,11 +91,10 @@ def calculate_projection(metrics, initial_fund, monthly_amt, years, is_reinvest)
     
     data = []
     
-    # 初始狀態
     current_price = metrics['current_price']
+    total_shares = 0.0
     
     # 處理第一筆單筆投入
-    total_shares = 0.0
     if initial_fund > 0:
         total_shares = initial_fund / current_price
         
@@ -118,22 +115,37 @@ def calculate_projection(metrics, initial_fund, monthly_amt, years, is_reinvest)
         # 3. 處理配息
         market_val = total_shares * current_price
         div_amt = market_val * monthly_yield
-        total_divs += div_amt
+        total_divs += div_amt # 累計領到的股息總額
         
         if is_reinvest:
-            total_shares += div_amt / current_price
+            # 股息買入
+            shares_from_div = div_amt / current_price
+            total_shares += shares_from_div
         else:
+            # 存入現金
             cash_wallet += div_amt
             
+        # 4. 計算總資產與均價
         total_asset = (total_shares * current_price) + cash_wallet
         
+        # 計算均價 (平均成本 = 總投入本金 / 總持有股數)
+        # 註：這裡的均價定義為「資金投入的平均成本」，不包含再投入的股息成本(視為零成本取得)，這樣看獲利比較直觀
+        if total_shares > 0:
+            avg_cost = total_cost / total_shares
+        else:
+            avg_cost = 0
+            
+        # 5. 寫入數據 (使用中文欄位，方便 Excel 閱讀)
         data.append({
-            "Month": m,
-            "Year": m/12,
-            "Total Cost": total_cost,
-            "Total Assets": total_asset,
-            "Accumulated Divs": total_divs,
-            "Net Profit": total_asset - total_cost
+            "月份": m,
+            "年": round(m/12, 2),
+            "總投入成本": round(total_cost, 0),
+            "累積持有股數": round(total_shares, 2),
+            "平均成本(均價)": round(avg_cost, 2),
+            "累積領取股息": round(total_divs, 0),
+            "預估股價": round(current_price, 2),
+            "總資產市值": round(total_asset, 0),
+            "損益金額": round(total_asset - total_cost, 0)
         })
         
     return pd.DataFrame(data)
@@ -149,7 +161,7 @@ if btn_calc:
     else:
         df1 = calculate_projection(metrics1, initial_lump_sum, monthly_invest, future_years, reinvest)
         final1 = df1.iloc[-1]
-        roi1 = (final1['Net Profit'] / final1['Total Cost']) * 100
+        roi1 = (final1['損益金額'] / final1['總投入成本']) * 100
 
         # 如果有開啟 PK 模式，分析選手 B
         metrics2 = None
@@ -164,89 +176,88 @@ if btn_calc:
         
         # --- 顯示結果介面 ---
         
-        # A. 體質比較表
-        st.subheader("📊 歷史體質數據 (參考用)")
-        col1, col2 = st.columns(2)
-        
-        with col1:
+        # A. 體質比較
+        st.subheader("📊 歷史體質數據 (參考)")
+        col_m1, col_m2 = st.columns(2)
+        with col_m1:
             st.markdown(f"### 🔵 {ticker1}")
-            st.write(f"年化成長 (CAGR): **{metrics1['cagr']*100:.2f}%**")
-            st.write(f"平均殖利率: **{metrics1['yield']*100:.2f}%**")
-            st.caption(f"數據長度: {metrics1['years_data']:.1f} 年")
-            
+            st.caption(f"年化成長: {metrics1['cagr']*100:.2f}% | 殖利率: {metrics1['yield']*100:.2f}%")
         if metrics2:
-            with col2:
+            with col_m2:
                 st.markdown(f"### 🔴 {ticker2}")
-                st.write(f"年化成長 (CAGR): **{metrics2['cagr']*100:.2f}%**")
-                st.write(f"平均殖利率: **{metrics2['yield']*100:.2f}%**")
-                st.caption(f"數據長度: {metrics2['years_data']:.1f} 年")
+                st.caption(f"年化成長: {metrics2['cagr']*100:.2f}% | 殖利率: {metrics2['yield']*100:.2f}%")
         
         st.divider()
         
-        # B. 最終結果 PK
-        st.subheader(f"🏁 {future_years} 年後資產對決")
+        # B. 詳細結果展示 (重點修改區)
+        st.subheader(f"🏁 {future_years} 年後資產總覽")
         
-        c1, c2, c3 = st.columns(3)
-        c1.metric("總投入成本", f"${final1['Total Cost']:,.0f}", help="包含單筆投入 + 所有定期定額")
+        # 顯示總成本 (大家都一樣)
+        st.metric("💰 總投入成本", f"${final1['總投入成本']:,.0f}")
         
-        # 顯示選手 A 結果
-        c2.metric(f"🔵 {ticker1} 總資產", f"${final1['Total Assets']:,.0f}", delta=f"{roi1:.1f}%")
-        
-        # 顯示選手 B 結果 (如果有)
+        # 選手 A 詳細數據
+        st.markdown(f"#### 🔵 {ticker1} 最終成績單")
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("總資產", f"${final1['總資產市值']:,.0f}", delta=f"{roi1:.1f}%")
+        c2.metric("累積領取股息", f"${final1['累積領取股息']:,.0f}")
+        c3.metric("持有股數", f"{final1['累積持有股數']:,.0f} 股")
+        c4.metric("平均均價", f"${final1['平均成本(均價)']:,.2f}", delta=f"現價 ${final1['預估股價']:,.2f}")
+
+        # 選手 B 詳細數據 (如果有)
         if metrics2 and df2 is not None:
             final2 = df2.iloc[-1]
-            roi2 = (final2['Net Profit'] / final2['Total Cost']) * 100
-            # 計算勝負差距
-            diff = final2['Total Assets'] - final1['Total Assets']
-            c3.metric(f"🔴 {ticker2} 總資產", f"${final2['Total Assets']:,.0f}", delta=f"{roi2:.1f}%")
+            roi2 = (final2['損益金額'] / final2['總投入成本']) * 100
+            st.markdown("---")
+            st.markdown(f"#### 🔴 {ticker2} 最終成績單")
+            d1, d2, d3, d4 = st.columns(4)
+            d1.metric("總資產", f"${final2['總資產市值']:,.0f}", delta=f"{roi2:.1f}%")
+            d2.metric("累積領取股息", f"${final2['累積領取股息']:,.0f}")
+            d3.metric("持有股數", f"{final2['累積持有股數']:,.0f} 股")
+            d4.metric("平均均價", f"${final2['平均成本(均價)']:,.2f}", delta=f"現價 ${final2['預估股價']:,.2f}")
             
-            if final1['Total Assets'] > final2['Total Assets']:
-                st.success(f"🏆 恭喜！ **{ticker1}** 獲勝，預估多賺 **${abs(diff):,.0f}**")
+            # 勝負判定
+            diff = final1['總資產市值'] - final2['總資產市值']
+            if diff > 0:
+                st.success(f"🏆 結論：**{ticker1}** 獲勝！ 預估總資產多出 **${abs(diff):,.0f}**")
             else:
-                st.error(f"🏆 哎呀！ **{ticker2}** 獲勝，預估多賺 **${abs(diff):,.0f}**")
-        else:
-            c3.empty()
+                st.error(f"🏆 結論：**{ticker2}** 獲勝！ 預估總資產多出 **${abs(diff):,.0f}**")
 
         # C. 圖表 PK
-        st.subheader("📈 資產成長曲線圖")
+        st.divider()
+        st.subheader("📈 資產成長曲線")
         chart_data = pd.DataFrame()
-        chart_data[f"{ticker1} 總資產"] = df1['Total Assets']
+        chart_data[f"{ticker1} 總資產"] = df1['總資產市值']
         if metrics2 and df2 is not None:
-            chart_data[f"{ticker2} 總資產"] = df2['Total Assets']
-        
-        # 加入成本線供參考
-        chart_data["投入成本"] = df1['Total Cost']
+            chart_data[f"{ticker2} 總資產"] = df2['總資產市值']
+        chart_data["投入成本"] = df1['總投入成本']
         
         st.line_chart(chart_data, color=["#0000FF", "#FF0000", "#AAAAAA"] if metrics2 else ["#0000FF", "#AAAAAA"])
         
-        # D. 下載報表功能 (Feature 3)
+        # D. 下載報表 (含詳細欄位)
         st.divider()
-        st.subheader("📥 下載詳細報告")
+        st.subheader("📥 下載詳細報告 (含均價與股息)")
         
-        # 準備下載用的 CSV
-        # 為了避免中文亂碼，我們用 utf-8-sig 編碼
-        csv = df1.to_csv(index=False).encode('utf-8-sig')
-        
+        # CSV 1
+        csv1 = df1.to_csv(index=False).encode('utf-8-sig')
         col_dl1, col_dl2 = st.columns(2)
-        
         with col_dl1:
             st.download_button(
-                label=f"下載 {ticker1} 詳細報表 (CSV)",
-                data=csv,
+                label=f"下載 {ticker1} 完整報表 (CSV)",
+                data=csv1,
                 file_name=f"{ticker1}_report.csv",
                 mime='text/csv',
             )
-            
+        
+        # CSV 2
         if metrics2 and df2 is not None:
             csv2 = df2.to_csv(index=False).encode('utf-8-sig')
             with col_dl2:
                 st.download_button(
-                    label=f"下載 {ticker2} 詳細報表 (CSV)",
+                    label=f"下載 {ticker2} 完整報表 (CSV)",
                     data=csv2,
                     file_name=f"{ticker2}_report.csv",
                     mime='text/csv',
                 )
 
 else:
-    st.info("👈 請在左側設定參數，體驗完整的資產試算功能！")
-
+    st.info("👈 請在左側輸入代號與金額，開始你的財富試算！")
