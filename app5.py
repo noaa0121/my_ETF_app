@@ -5,12 +5,12 @@ import numpy as np
 import datetime
 
 # --- 頁面設定 ---
-st.set_page_config(page_title="ETF 資產試算", page_icon="💎", layout="wide")
+st.set_page_config(page_title="ETF資產試算", page_icon="📈", layout="wide")
 
-st.title("ETF 資產試算")
+st.title("ETF資產試算")
 st.markdown("""
 具備 **單筆投入**、**定期定額** 與 **雙標的 PK** 功能。
-報表全面升級：包含 **累積股息**、**持有股數** 與 **平均成本 (均價)**。
+報表全面升級：包含 **年化報酬參數**、**累積股息**、**持有股數** 與 **平均成本**。
 """)
 
 # --- 側邊欄：輸入區 ---
@@ -33,7 +33,7 @@ with st.sidebar:
 
     st.header("3. 時間與參數")
     future_years = st.slider("預計投資年數", min_value=1, max_value=40, value=10)
-    reinvest = st.toggle("股息再投入(複利)", value=True)
+    reinvest = st.toggle("股息再投入 (複利)", value=True)
     
     btn_calc = st.button("開始詳細分析", type="primary")
 
@@ -83,7 +83,7 @@ def get_historical_metrics(ticker_symbol):
     except Exception as e:
         return None, str(e)
 
-# --- 函數：推算未來資產 (核心修改處) ---
+# --- 函數：推算未來資產 (新增：將參數寫入 DataFrame) ---
 def calculate_projection(metrics, initial_fund, monthly_amt, years, is_reinvest):
     months = years * 12
     monthly_growth = (1 + metrics['cagr']) ** (1/12) - 1
@@ -103,6 +103,9 @@ def calculate_projection(metrics, initial_fund, monthly_amt, years, is_reinvest)
     total_divs = 0.0
     
     for m in range(1, months + 1):
+        # 計算目前是第幾年 (1~12月=1, 13~24月=2...)
+        current_year_num = (m - 1) // 12 + 1
+        
         # 1. 股價成長
         current_price = current_price * (1 + monthly_growth)
         
@@ -115,30 +118,29 @@ def calculate_projection(metrics, initial_fund, monthly_amt, years, is_reinvest)
         # 3. 處理配息
         market_val = total_shares * current_price
         div_amt = market_val * monthly_yield
-        total_divs += div_amt # 累計領到的股息總額
+        total_divs += div_amt 
         
         if is_reinvest:
-            # 股息買入
             shares_from_div = div_amt / current_price
             total_shares += shares_from_div
         else:
-            # 存入現金
             cash_wallet += div_amt
             
         # 4. 計算總資產與均價
         total_asset = (total_shares * current_price) + cash_wallet
         
-        # 計算均價 (平均成本 = 總投入本金 / 總持有股數)
-        # 註：這裡的均價定義為「資金投入的平均成本」，不包含再投入的股息成本(視為零成本取得)，這樣看獲利比較直觀
         if total_shares > 0:
             avg_cost = total_cost / total_shares
         else:
             avg_cost = 0
             
-        # 5. 寫入數據 (使用中文欄位，方便 Excel 閱讀)
+        # 5. 寫入數據 (新增參數欄位)
         data.append({
-            "月份": m,
-            "年": round(m/12, 2),
+            "標的代號": metrics['symbol'],  # New
+            "歷史年化報酬率(%)": round(metrics['cagr'] * 100, 2), # New
+            "歷史平均殖利率(%)": round(metrics['yield'] * 100, 2), # New
+            "第N年": current_year_num,
+            "第N個月": m,
             "總投入成本": round(total_cost, 0),
             "累積持有股數": round(total_shares, 2),
             "平均成本(均價)": round(avg_cost, 2),
@@ -176,26 +178,28 @@ if btn_calc:
         
         # --- 顯示結果介面 ---
         
-        # A. 體質比較
-        st.subheader("📊 歷史體質數據 (參考)")
+        # A. 體質比較 (保留顯示)
+        st.subheader("📊 歷史體質數據 (分析依據)")
         col_m1, col_m2 = st.columns(2)
         with col_m1:
             st.markdown(f"### 🔵 {ticker1}")
-            st.caption(f"年化成長: {metrics1['cagr']*100:.2f}% | 殖利率: {metrics1['yield']*100:.2f}%")
+            st.write(f"歷史年化報酬 (CAGR): **{metrics1['cagr']*100:.2f}%**")
+            st.write(f"歷史平均殖利率: **{metrics1['yield']*100:.2f}%**")
+            st.caption(f"數據區間長度: {metrics1['years_data']:.1f} 年")
         if metrics2:
             with col_m2:
                 st.markdown(f"### 🔴 {ticker2}")
-                st.caption(f"年化成長: {metrics2['cagr']*100:.2f}% | 殖利率: {metrics2['yield']*100:.2f}%")
+                st.write(f"歷史年化報酬 (CAGR): **{metrics2['cagr']*100:.2f}%**")
+                st.write(f"歷史平均殖利率: **{metrics2['yield']*100:.2f}%**")
+                st.caption(f"數據區間長度: {metrics2['years_data']:.1f} 年")
         
         st.divider()
         
-        # B. 詳細結果展示 (重點修改區)
+        # B. 詳細結果展示
         st.subheader(f"🏁 {future_years} 年後資產總覽")
         
-        # 顯示總成本 (大家都一樣)
         st.metric("💰 總投入成本", f"${final1['總投入成本']:,.0f}")
         
-        # 選手 A 詳細數據
         st.markdown(f"#### 🔵 {ticker1} 最終成績單")
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("總資產", f"${final1['總資產市值']:,.0f}", delta=f"{roi1:.1f}%")
@@ -203,7 +207,6 @@ if btn_calc:
         c3.metric("持有股數", f"{final1['累積持有股數']:,.0f} 股")
         c4.metric("平均均價", f"${final1['平均成本(均價)']:,.2f}", delta=f"現價 ${final1['預估股價']:,.2f}")
 
-        # 選手 B 詳細數據 (如果有)
         if metrics2 and df2 is not None:
             final2 = df2.iloc[-1]
             roi2 = (final2['損益金額'] / final2['總投入成本']) * 100
@@ -215,7 +218,6 @@ if btn_calc:
             d3.metric("持有股數", f"{final2['累積持有股數']:,.0f} 股")
             d4.metric("平均均價", f"${final2['平均成本(均價)']:,.2f}", delta=f"現價 ${final2['預估股價']:,.2f}")
             
-            # 勝負判定
             diff = final1['總資產市值'] - final2['總資產市值']
             if diff > 0:
                 st.success(f"🏆 結論：**{ticker1}** 獲勝！ 預估總資產多出 **${abs(diff):,.0f}**")
@@ -233,27 +235,34 @@ if btn_calc:
         
         st.line_chart(chart_data, color=["#0000FF", "#FF0000", "#AAAAAA"] if metrics2 else ["#0000FF", "#AAAAAA"])
         
-        # D. 下載報表 (含詳細欄位)
+        # D. 下載報表
         st.divider()
-        st.subheader("📥 下載詳細報告 (含均價與股息)")
+        st.subheader("📥 下載詳細報告 (含計算參數)")
         
-        # CSV 1
-        csv1 = df1.to_csv(index=False).encode('utf-8-sig')
+        # 調整欄位順序 (讓重點欄位排前面)
+        cols_order = [
+            "標的代號", "歷史年化報酬率(%)", "歷史平均殖利率(%)", 
+            "第N年", "第N個月", "總投入成本", "總資產市值", 
+            "損益金額", "累積持有股數", "平均成本(均價)", "累積領取股息"
+        ]
+        
+        # 下載區塊 A
+        csv1 = df1[cols_order].to_csv(index=False).encode('utf-8-sig')
         col_dl1, col_dl2 = st.columns(2)
         with col_dl1:
             st.download_button(
-                label=f"下載 {ticker1} 完整報表 (CSV)",
+                label=f"下載 {ticker1} 完整報表",
                 data=csv1,
                 file_name=f"{ticker1}_report.csv",
                 mime='text/csv',
             )
         
-        # CSV 2
+        # 下載區塊 B
         if metrics2 and df2 is not None:
-            csv2 = df2.to_csv(index=False).encode('utf-8-sig')
+            csv2 = df2[cols_order].to_csv(index=False).encode('utf-8-sig')
             with col_dl2:
                 st.download_button(
-                    label=f"下載 {ticker2} 完整報表 (CSV)",
+                    label=f"下載 {ticker2} 完整報表",
                     data=csv2,
                     file_name=f"{ticker2}_report.csv",
                     mime='text/csv',
