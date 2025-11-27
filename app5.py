@@ -7,7 +7,7 @@ import datetime
 # --- 頁面設定 ---
 st.set_page_config(page_title="ETF 終極資產試算", page_icon="🏆", layout="wide")
 
-st.title("🏆 ETF 終極資產試算 (含 PK 模式)")
+st.title("🏆 ETF 終極資產試算")
 st.markdown("""
 這個工具集成了 **單筆投入**、**定期定額** 以及 **雙標的 PK 對決** 功能。
 利用歷史大數據推算未來，並支援 **下載報表**。
@@ -249,3 +249,4 @@ if btn_calc:
 
 else:
     st.info("👈 請在左側設定參數，體驗完整的資產試算功能！")
+
